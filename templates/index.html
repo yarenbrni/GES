@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Güneş Enerjisi Verimlilik Analizi</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        .plot-container {
+            margin: 20px 0;
+            padding: 20px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+        }
+        .metrics-container {
+            margin: 20px 0;
+            padding: 20px;
+            background-color: #f8f9fa;
+            border-radius: 5px;
+        }
+        .model-metrics {
+            margin: 10px 0;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container mt-5">
+        <h1 class="text-center mb-4">Güneş Enerjisi Verimlilik Analizi</h1>
+        
+        {% if results %}
+            {% for result in results %}
+                <div class="card mb-4">
+                    <div class="card-header">
+                        <h2>Invertör {{ result.inverter_id }}</h2>
+                        <p>Toplam Veri Noktası: {{ result.total_points }}</p>
+                    </div>
+                    <div class="card-body">
+                        <div class="plot-container">
+                            <img src="data:image/png;base64,{{ result.plot }}" class="img-fluid" alt="Verimlilik Grafiği">
+                        </div>
+                        
+                        <div class="metrics-container">
+                            <h3>Model Performans Metrikleri</h3>
+                            
+                            <div class="row">
+                                <div class="col-md-4">
+                                    <div class="model-metrics">
+                                        <h4>ARIMA Modeli</h4>
+                                        <ul>
+                                            <li>MSE: {{ result.arima_metrics.mse }}</li>
+                                            <li>MAE: {{ result.arima_metrics.mae }}</li>
+                                            <li>R²: {{ result.arima_metrics.r2 }}</li>
+                                        </ul>
+                                    </div>
+                                </div>
+                                
+                                <div class="col-md-4">
+                                    <div class="model-metrics">
+                                        <h4>XGBoost Modeli</h4>
+                                        <ul>
+                                            <li>MSE: {{ result.xgb_metrics.mse }}</li>
+                                            <li>MAE: {{ result.xgb_metrics.mae }}</li>
+                                            <li>R²: {{ result.xgb_metrics.r2 }}</li>
+                                        </ul>
+                                    </div>
+                                </div>
+                                
+                                <div class="col-md-4">
+                                    <div class="model-metrics">
+                                        <h4>LightGBM Modeli</h4>
+                                        <ul>
+                                            <li>MSE: {{ result.lgbm_metrics.mse }}</li>
+                                            <li>MAE: {{ result.lgbm_metrics.mae }}</li>
+                                            <li>R²: {{ result.lgbm_metrics.r2 }}</li>
+                                        </ul>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            {% endfor %}
+        {% else %}
+            <div class="alert alert-warning">
+                Veri bulunamadı.
+            </div>
+        {% endif %}
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>

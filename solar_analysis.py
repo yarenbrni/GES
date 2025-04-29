@@ -1,0 +1,358 @@
+import pandas as pd
+import numpy as np
+import xgboost as xgb
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import mean_squared_error, r2_score
+import pyodbc
+from datetime import datetime, timedelta
+import matplotlib.pyplot as plt
+import seaborn as sns
+from sklearn.preprocessing import MinMaxScaler
+import warnings
+from statsmodels.tsa.arima.model import ARIMA
+from statsmodels.tsa.seasonal import seasonal_decompose
+from statsmodels.tsa.stattools import adfuller
+
+warnings.filterwarnings('ignore')
+
+class SolarSystemAnalyzer:
+    def __init__(self):
+        self.connection_string = (
+            "DRIVER={ODBC Driver 17 for SQL Server};"
+            "SERVER=(localdb)\\Yaren;"
+            "DATABASE=cepdev;"
+            "Trusted_Connection=yes;"
+        )
+        self.conn = None
+        self.cursor = None
+        self.models = {
+            'energy_loss': {},
+            'failure_prediction': {}
+        }
+
+    def connect(self):
+        """SQL Server'a bağlantı kurar"""
+        try:
+            self.conn = pyodbc.connect(self.connection_string)
+            self.cursor = self.conn.cursor()
+            print("SQL Server bağlantısı başarılı!")
+        except Exception as e:
+            print(f"Bağlantı hatası: {str(e)}")
+            raise
+
+    def get_inverter_data(self, inverter_id, year=None):
+        """Belirli bir invertör için verileri çeker"""
+        try:
+            query = f"""
+                SELECT * FROM SolarRadiationData 
+                WHERE InverterID = {inverter_id}
+            """
+            if year:
+                query += f" AND Year = {year}"
+            
+            self.cursor.execute(query)
+            columns = [column[0] for column in self.cursor.description]
+            results = self.cursor.fetchall()
+            
+            return pd.DataFrame.from_records(results, columns=columns)
+        except Exception as e:
+            print(f"Veri çekme hatası: {str(e)}")
+            raise
+
+    def prepare_features(self, data):
+        """Özellikleri hazırlar ve ön işleme yapar"""
+        # Kategorik değişkenleri dönüştür
+        data['Season_encoded'] = pd.Categorical(data['Season']).codes
+        
+        # Tarih özelliklerini dönüştür
+        data['LastMaintenance'] = pd.to_datetime(data['LastMaintenance'])
+        data['DaysSinceLastMaintenance'] = (pd.Timestamp.now() - data['LastMaintenance']).dt.days
+        
+        # Temel özellikler
+        base_features = ['H_h_m', 'H_i_opt_m', 'H_i_m', 'Hb_n_m']
+        
+        # Çevresel özellikler
+        environmental_features = ['Humidity', 'WindSpeed', 'CloudCover', 'DustLevel']
+        
+        # Zamansal özellikler
+        temporal_features = ['Hour', 'SunAngle', 'DayLength', 'Season_encoded']
+        
+        # İnvertör özellikleri
+        inverter_features = ['InverterAge', 'DaysSinceLastMaintenance', 'EfficiencyRatio', 'OperatingHours']
+        
+        # Tüm özellikleri birleştir
+        features = base_features + environmental_features + temporal_features + inverter_features
+        
+        return data[features]
+
+    def train_energy_loss_model(self, data, inverter_id):
+        """Enerji kaybı için XGBoost modelini eğitir"""
+        # Özellikleri hazırla
+        X = self.prepare_features(data)
+        
+        # Hedef değişken (enerji kaybı)
+        data['energy_loss'] = data['H_i_opt_m'] - data['H_i_m']
+        y = data['energy_loss']
+        
+        # Veriyi eğitim ve test olarak böl
+        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+        
+        # XGBoost modelini eğit
+        model = xgb.XGBRegressor(
+            n_estimators=100,
+            learning_rate=0.1,
+            max_depth=5,
+            min_child_weight=1,
+            subsample=0.8,
+            colsample_bytree=0.8,
+            random_state=42
+        )
+        model.fit(X_train, y_train)
+        
+        # Model performansını değerlendir
+        y_pred = model.predict(X_test)
+        mse = mean_squared_error(y_test, y_pred)
+        r2 = r2_score(y_test, y_pred)
+        
+        return {
+            'model': model,
+            'mse': mse,
+            'r2': r2,
+            'feature_importance': dict(zip(X.columns, model.feature_importances_))
+        }
+
+    def train_failure_prediction_model(self, data, inverter_id):
+        """Arıza tahmini için XGBoost modelini eğitir"""
+        # Özellikleri hazırla
+        X = self.prepare_features(data)
+        
+        # Arıza riski hesaplama (geliştirilmiş versiyon)
+        high_radiation = (data['H_i_m'] > 200).astype(int)
+        temperature_stress = (pd.to_numeric(data['T2m'], errors='coerce') > 30).astype(int)
+        high_dust = (data['DustLevel'] > 70).astype(int)
+        high_wind = (data['WindSpeed'] > 10).astype(int)
+        low_efficiency = (data['EfficiencyRatio'] < 90).astype(int)
+        maintenance_overdue = (data['DaysSinceLastMaintenance'] > 180).astype(int)
+        
+        # Ağırlıklı risk skoru
+        data['failure_risk'] = (
+            high_radiation * 0.2 +
+            temperature_stress * 0.2 +
+            high_dust * 0.15 +
+            high_wind * 0.15 +
+            low_efficiency * 0.15 +
+            maintenance_overdue * 0.15
+        )
+        y = data['failure_risk']
+        
+        # Veriyi eğitim ve test olarak böl
+        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+        
+        # XGBoost modelini eğit
+        model = xgb.XGBRegressor(
+            n_estimators=100,
+            learning_rate=0.1,
+            max_depth=5,
+            min_child_weight=1,
+            subsample=0.8,
+            colsample_bytree=0.8,
+            random_state=42
+        )
+        model.fit(X_train, y_train)
+        
+        # Model performansını değerlendir
+        y_pred = model.predict(X_test)
+        mse = mean_squared_error(y_test, y_pred)
+        r2 = r2_score(y_test, y_pred)
+        
+        return {
+            'model': model,
+            'mse': mse,
+            'r2': r2,
+            'feature_importance': dict(zip(X.columns, model.feature_importances_))
+        }
+
+    def analyze_inverter_performance(self, inverter_id, year=None):
+        """Belirli bir invertör için performans analizi yapar"""
+        try:
+            # Verileri çek
+            data = self.get_inverter_data(inverter_id, year)
+            
+            # Enerji kaybı modelini eğit
+            energy_loss_model = self.train_energy_loss_model(data, inverter_id)
+            
+            # Arıza tahmin modelini eğit
+            failure_model = self.train_failure_prediction_model(data, inverter_id)
+            
+            # Sonuçları yazdır
+            print(f"\n=== İnvertör {inverter_id} Analizi ===")
+            print(f"Yıl: {year if year else 'Tüm Yıllar'}")
+            
+            print("\nEnerji Kaybı Modeli:")
+            print(f"MSE: {energy_loss_model['mse']:.4f}")
+            print(f"R²: {energy_loss_model['r2']:.4f}")
+            print("\nÖzellik Önemleri:")
+            sorted_features = sorted(
+                energy_loss_model['feature_importance'].items(),
+                key=lambda x: x[1],
+                reverse=True
+            )
+            for feature, importance in sorted_features:
+                if importance > 0.01:  # Sadece önemli özellikleri göster
+                    print(f"{feature}: {importance:.4f}")
+            
+            print("\nArıza Tahmin Modeli:")
+            print(f"MSE: {failure_model['mse']:.4f}")
+            print(f"R²: {failure_model['r2']:.4f}")
+            print("\nÖzellik Önemleri:")
+            sorted_features = sorted(
+                failure_model['feature_importance'].items(),
+                key=lambda x: x[1],
+                reverse=True
+            )
+            for feature, importance in sorted_features:
+                if importance > 0.01:  # Sadece önemli özellikleri göster
+                    print(f"{feature}: {importance:.4f}")
+            
+            return {
+                'energy_loss_model': energy_loss_model,
+                'failure_model': failure_model
+            }
+            
+        except Exception as e:
+            print(f"Analiz hatası: {str(e)}")
+            raise
+
+    def analyze_time_series(self, inverter_id, year=None):
+        """Zaman serisi analizi yapar"""
+        try:
+            # Verileri çek
+            data = self.get_inverter_data(inverter_id, year)
+            
+            # Saatlik verileri günlük ortalamaya dönüştür
+            daily_data = data.groupby(['Year', 'Month', 'Day'])['H_i_m'].mean().reset_index()
+            daily_data['Date'] = pd.to_datetime(daily_data[['Year', 'Month', 'Day']].astype(str).agg('-'.join, axis=1))
+            daily_data.set_index('Date', inplace=True)
+            ts_data = daily_data['H_i_m']
+            
+            # Mevsimsellik analizi
+            decomposition = seasonal_decompose(ts_data, period=30)  # 30 günlük periyot
+            
+            # Grafikleri çiz
+            plt.figure(figsize=(15, 10))
+            plt.subplot(411)
+            plt.plot(ts_data)
+            plt.title(f'İnvertör {inverter_id} - Günlük Ortalama Işınım')
+            plt.subplot(412)
+            plt.plot(decomposition.trend)
+            plt.title('Trend Bileşeni')
+            plt.subplot(413)
+            plt.plot(decomposition.seasonal)
+            plt.title('Mevsimsel Bileşen')
+            plt.subplot(414)
+            plt.plot(decomposition.resid)
+            plt.title('Artıklar')
+            plt.tight_layout()
+            plt.savefig(f'inverter_{inverter_id}_decomposition.png')
+            plt.close()
+            
+            # Durağanlık testi
+            adf_result = adfuller(ts_data.dropna())
+            print(f"\nİnvertör {inverter_id} - Durağanlık Testi Sonuçları:")
+            print(f'ADF İstatistiği: {adf_result[0]:.4f}')
+            print(f'p-değeri: {adf_result[1]:.4f}')
+            
+            # ARIMA modeli
+            # Veriyi train ve test olarak böl
+            train_size = int(len(ts_data) * 0.8)
+            train_data = ts_data[:train_size]
+            test_data = ts_data[train_size:]
+            
+            # ARIMA modelini eğit
+            model = ARIMA(train_data, order=(1,1,1))  # Basit bir ARIMA modeli
+            results = model.fit()
+            
+            # Tahminler
+            predictions = results.forecast(steps=len(test_data))
+            
+            # Model performansını değerlendir
+            mse = mean_squared_error(test_data, predictions)
+            rmse = np.sqrt(mse)
+            r2 = r2_score(test_data, predictions)
+            
+            print(f"\nARIMA Model Performansı (İnvertör {inverter_id}):")
+            print(f"MSE: {mse:.4f}")
+            print(f"RMSE: {rmse:.4f}")
+            print(f"R²: {r2:.4f}")
+            
+            # Tahmin grafiği
+            plt.figure(figsize=(12, 6))
+            plt.plot(test_data.index, test_data.values, label='Gerçek Değerler')
+            plt.plot(test_data.index, predictions, label='ARIMA Tahminleri', linestyle='--')
+            plt.title(f'İnvertör {inverter_id} - ARIMA Tahminleri')
+            plt.legend()
+            plt.savefig(f'inverter_{inverter_id}_arima_predictions.png')
+            plt.close()
+            
+            return {
+                'decomposition': decomposition,
+                'adf_result': adf_result,
+                'arima_results': results,
+                'predictions': predictions,
+                'metrics': {
+                    'mse': mse,
+                    'rmse': rmse,
+                    'r2': r2
+                }
+            }
+            
+        except Exception as e:
+            print(f"Zaman serisi analizi hatası: {str(e)}")
+            raise
+
+    def analyze_all_inverters(self, year=None):
+        """Tüm invertörler için analiz yapar"""
+        results = {}
+        for inverter_id in range(1, 8):
+            print(f"\n{'='*20} İnvertör {inverter_id} Analizi {'='*20}")
+            
+            # XGBoost analizleri
+            results[inverter_id] = self.analyze_inverter_performance(inverter_id, year)
+            
+            # Zaman serisi analizi
+            print(f"\n--- Zaman Serisi Analizi (İnvertör {inverter_id}) ---")
+            time_series_results = self.analyze_time_series(inverter_id, year)
+            results[inverter_id]['time_series'] = time_series_results
+            
+        return results
+
+    def disconnect(self):
+        """SQL Server bağlantısını kapatır"""
+        if self.cursor:
+            self.cursor.close()
+        if self.conn:
+            self.conn.close()
+            print("Bağlantı kapatıldı.")
+
+def main():
+    analyzer = SolarSystemAnalyzer()
+    
+    try:
+        # Bağlantıyı kur
+        analyzer.connect()
+        
+        # 2023 yılı için tüm invertörlerin analizi
+        print("\n=== 2023 Yılı İnvertör Analizleri ===")
+        results_2023 = analyzer.analyze_all_inverters(2023)
+        
+        # Tüm yıllar için tüm invertörlerin analizi
+        print("\n=== Tüm Yıllar İnvertör Analizleri ===")
+        results_all = analyzer.analyze_all_inverters()
+        
+    except Exception as e:
+        print(f"Hata oluştu: {str(e)}")
+    finally:
+        analyzer.disconnect()
+
+if __name__ == "__main__":
+    main() 

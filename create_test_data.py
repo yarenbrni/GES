@@ -1,0 +1,126 @@
+import pyodbc
+import pandas as pd
+import numpy as np
+from datetime import datetime, timedelta
+import calendar
+
+def create_test_data():
+    # Bağlantı bilgileri
+    connection_string = (
+        "DRIVER={ODBC Driver 17 for SQL Server};"
+        "SERVER=(localdb)\\Yaren;"
+        "DATABASE=cepdev;"
+        "Trusted_Connection=yes;"
+    )
+    
+    try:
+        # Bağlantıyı kur
+        conn = pyodbc.connect(connection_string)
+        cursor = conn.cursor()
+        
+        # Önce tabloyu sil (eğer varsa)
+        cursor.execute("""
+            IF OBJECT_ID('SolarRadiationData', 'U') IS NOT NULL
+                DROP TABLE SolarRadiationData
+        """)
+        
+        # Tabloyu oluştur
+        cursor.execute("""
+            CREATE TABLE SolarRadiationData (
+                ID INT IDENTITY(1,1) PRIMARY KEY,
+                InverterID INT,
+                Year INT,
+                Month VARCHAR(3),
+                Day INT,
+                Hour INT,
+                H_h_m FLOAT,              -- Yatay düzlem ışınımı
+                H_i_opt_m FLOAT,          -- Optimal eğimli düzlem ışınımı
+                H_i_m FLOAT,              -- Eğimli düzlem ışınımı
+                Hb_n_m FLOAT,             -- Normal düzlem direkt ışınımı
+                T2m VARCHAR(10),          -- Sıcaklık
+                Humidity FLOAT,           -- Nem oranı (%)
+                WindSpeed FLOAT,          -- Rüzgar hızı (m/s)
+                CloudCover FLOAT,         -- Bulut örtüsü (%)
+                DustLevel FLOAT,          -- Toz seviyesi (µg/m³)
+                SunAngle FLOAT,           -- Güneş açısı (derece)
+                DayLength FLOAT,          -- Gün uzunluğu (saat)
+                InverterAge INT,          -- İnvertör yaşı (ay)
+                LastMaintenance DATE,     -- Son bakım tarihi
+                EfficiencyRatio FLOAT,    -- Verimlilik oranı (%)
+                OperatingHours FLOAT,     -- Çalışma süresi (saat)
+                Season VARCHAR(10),       -- Mevsim
+                CreatedDate DATETIME DEFAULT GETDATE()
+            )
+        """)
+        
+        # Test verileri oluştur
+        months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+        seasons = {
+            'Jan': 'Winter', 'Feb': 'Winter', 'Mar': 'Spring',
+            'Apr': 'Spring', 'May': 'Spring', 'Jun': 'Summer',
+            'Jul': 'Summer', 'Aug': 'Summer', 'Sep': 'Fall',
+            'Oct': 'Fall', 'Nov': 'Fall', 'Dec': 'Winter'
+        }
+        years = [2022, 2023]
+        
+        for year in years:
+            for month in months:
+                # Her ay için doğru gün sayısını al
+                month_num = months.index(month) + 1
+                days_in_month = calendar.monthrange(year, month_num)[1]
+                
+                for day in range(1, days_in_month + 1):
+                    for hour in range(6, 20):  # Gün ışığı saatleri
+                        for inverter_id in range(1, 8):
+                            # Temel güneş verileri
+                            H_h_m = np.random.normal(150, 30)  # Yatay düzlem ışınımı
+                            H_i_opt_m = H_h_m * 1.2  # Optimal eğimli düzlem ışınımı
+                            H_i_m = H_i_opt_m * np.random.uniform(0.8, 1.0)  # Gerçek eğimli düzlem ışınımı
+                            Hb_n_m = H_h_m * 0.7  # Normal düzlem direkt ışınımı
+                            
+                            # Çevresel faktörler
+                            base_temp = 25 + 10 * np.sin(2 * np.pi * (hour - 6) / 14)  # Saat bazlı sıcaklık
+                            T2m = f"{base_temp + np.random.normal(0, 2):.1f}"
+                            humidity = np.random.normal(60, 10)  # Nem oranı
+                            wind_speed = np.random.exponential(3)  # Rüzgar hızı
+                            cloud_cover = np.random.uniform(0, 100)  # Bulut örtüsü
+                            dust_level = np.random.normal(50, 10)  # Toz seviyesi
+                            
+                            # Zamansal özellikler
+                            day_of_year = pd.Timestamp(f"{year}-{month_num:02d}-{day:02d}").dayofyear
+                            sun_angle = 90 - 23.45 * np.cos(2 * np.pi * (day_of_year + 10) / 365)
+                            day_length = 12 + 2 * np.sin(2 * np.pi * (day_of_year - 81) / 365)
+                            
+                            # İnvertör özellikleri
+                            inverter_age = (year - 2020) * 12 + months.index(month)
+                            last_maintenance = f"{year}-{month_num:02d}-15"
+                            efficiency_ratio = 95 - inverter_age * 0.1 + np.random.normal(0, 1)
+                            operating_hours = (day_of_year - 1) * day_length + (hour - 6)
+                            season = seasons[month]
+                            
+                            # Veriyi ekle
+                            cursor.execute("""
+                                INSERT INTO SolarRadiationData 
+                                (InverterID, Year, Month, Day, Hour, H_h_m, H_i_opt_m, H_i_m, Hb_n_m, T2m,
+                                Humidity, WindSpeed, CloudCover, DustLevel, SunAngle, DayLength,
+                                InverterAge, LastMaintenance, EfficiencyRatio, OperatingHours, Season)
+                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                                        ?, ?, ?, ?, ?, ?,
+                                        ?, ?, ?, ?, ?)
+                            """, (inverter_id, year, month, day, hour, H_h_m, H_i_opt_m, H_i_m, Hb_n_m, T2m,
+                                  humidity, wind_speed, cloud_cover, dust_level, sun_angle, day_length,
+                                  inverter_age, last_maintenance, efficiency_ratio, operating_hours, season))
+        
+        conn.commit()
+        print("Test verileri başarıyla oluşturuldu!")
+        
+    except Exception as e:
+        print(f"Hata oluştu: {str(e)}")
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
+if __name__ == "__main__":
+    create_test_data() 

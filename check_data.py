@@ -1,0 +1,69 @@
+import pyodbc
+import pandas as pd
+
+def check_database():
+    # SQL Server bağlantısı
+    connection_string = (
+        "DRIVER={ODBC Driver 17 for SQL Server};"
+        "SERVER=(localdb)\\Yaren;"
+        "DATABASE=cepdev;"
+        "Trusted_Connection=yes;"
+    )
+    
+    try:
+        # Bağlantıyı kur
+        conn = pyodbc.connect(connection_string)
+        print("Veritabanına bağlandı.")
+        
+        # Veri kontrolü için sorgu
+        query = """
+            SELECT 
+                COUNT(*) as TotalRecords,
+                COUNT(DISTINCT InverterID) as UniqueInverters,
+                MIN(Year) as MinYear,
+                MAX(Year) as MaxYear
+            FROM SolarRadiationData
+        """
+        
+        # Verileri kontrol et
+        df = pd.read_sql(query, conn)
+        print("\nVeritabanı İstatistikleri:")
+        print(df)
+        
+        # 2023 yılı verilerini kontrol et
+        query_2023 = """
+            SELECT 
+                COUNT(*) as Records2023,
+                COUNT(DISTINCT InverterID) as Inverters2023
+            FROM SolarRadiationData
+            WHERE Year = 2023
+        """
+        
+        df_2023 = pd.read_sql(query_2023, conn)
+        print("\n2023 Yılı Verileri:")
+        print(df_2023)
+        
+        # Her invertör için veri sayısını kontrol et
+        query_inverters = """
+            SELECT 
+                InverterID,
+                COUNT(*) as RecordCount
+            FROM SolarRadiationData
+            WHERE Year = 2023
+            GROUP BY InverterID
+            ORDER BY InverterID
+        """
+        
+        df_inverters = pd.read_sql(query_inverters, conn)
+        print("\nHer Invertör İçin Veri Sayısı:")
+        print(df_inverters)
+        
+    except Exception as e:
+        print(f"Hata oluştu: {str(e)}")
+    finally:
+        if conn:
+            conn.close()
+            print("\nBağlantı kapatıldı.")
+
+if __name__ == "__main__":
+    check_database() 
