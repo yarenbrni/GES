@@ -1,3 +1,7 @@
+<<<<<<< HEAD
+=======
+# GES
+>>>>>>> 389b681a2649b0a8fab7d99b9bc39a7e1f6dc59e
 # PVsyst SQL Server Bağlantı Projesi
 
 Bu proje, PVsyst'ten alınan güneş ışınımı verilerini SQL Server'a aktarmak ve yönetmek için kullanılır.
@@ -52,4 +56,8 @@ SolarRadiationData tablosu şu alanları içerir:
 - H_i_m (Eğimli düzlemdeki güneş ışınımı)
 - Hb_n_m (Normal düzlemdeki direkt güneş ışınımı)
 - T2m (Sıcaklık verisi)
+<<<<<<< HEAD
 - CreatedDate (Kayıt oluşturma tarihi) 
+=======
+- CreatedDate (Kayıt oluşturma tarihi) 
+>>>>>>> 389b681a2649b0a8fab7d99b9bc39a7e1f6dc59e
